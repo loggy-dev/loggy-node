@@ -1,0 +1,43 @@
+{
+  "name": "@loggydev/loggy-node",
+  "version": "0.2.1",
+  "description": "just some super simple and pretty logs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "jest",
+    "test:sample": "ts-node test/sample-logs.ts",
+    "dev": "ts-node src/index.ts",
+    "npm:publish": "tsc && npm publish --access public"
+  },
+  "homepage": "https://loggy.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevin-wynn/loggy.git"
+  },
+  "keywords": [
+    "logs",
+    "logging",
+    "console",
+    "debug",
+    "logger"
+  ],
+  "author": "Kevin Wynn",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kevin-wynn/loggy/issues"
+  },
+  "devDependencies": {
+    "@babel/preset-env": "^7.28.0",
+    "@babel/preset-typescript": "^7.27.1",
+    "@types/jest": "^30.0.0",
+    "jest": "^30.0.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2"
+  }
+}
