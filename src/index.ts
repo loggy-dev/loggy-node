@@ -51,6 +51,20 @@ interface LoggyConfig {
     flushInterval?: number;
     publicKey?: string;
   };
+  /**
+   * Auto-capture options for intercepting standard output
+   */
+  capture?: {
+    /**
+     * Intercept console.log, console.info, console.warn, console.error
+     * and automatically send them to Loggy
+     */
+    console?: boolean;
+    /**
+     * Capture uncaught exceptions and unhandled promise rejections
+     */
+    exceptions?: boolean;
+  };
 }
 
 const LEVEL_COLORS = {
@@ -93,6 +107,7 @@ export const CreateLoggy = (config: LoggyConfig) => {
     compact = false,
     timestamp = true,
     remote,
+    capture,
   } = config;
   const styledIdentifier = color
     ? chalk.hex("#B2BEB5")(identifier)
@@ -104,6 +119,18 @@ export const CreateLoggy = (config: LoggyConfig) => {
   const batchSize = remote?.batchSize ?? 50;
   const flushInterval = remote?.flushInterval ?? 5000;
   const endpoint = remote?.endpoint ?? "https://loggy.dev/api/logs/ingest";
+
+  // Store original console methods for restoration
+  const originalConsole = {
+    log: console.log,
+    info: console.info,
+    warn: console.warn,
+    error: console.error,
+  };
+
+  // Track if we've set up capture handlers
+  let consolePatched = false;
+  let exceptionHandlersInstalled = false;
 
   const flushLogs = async () => {
     if (!remote?.token || logBuffer.length === 0) return;
@@ -212,19 +239,173 @@ export const CreateLoggy = (config: LoggyConfig) => {
       });
     };
 
+  // Helper to convert console arguments to a string message
+  const argsToMessage = (args: any[]): { message: string; metadata?: any } => {
+    if (args.length === 0) return { message: "" };
+    if (args.length === 1) {
+      if (typeof args[0] === "string") return { message: args[0] };
+      if (typeof args[0] === "object") {
+        return { message: JSON.stringify(args[0]), metadata: args[0] };
+      }
+      return { message: String(args[0]) };
+    }
+    // Multiple args: first string is message, rest is metadata
+    const firstString = args.find((a) => typeof a === "string");
+    const objects = args.filter((a) => typeof a === "object" && a !== null);
+    return {
+      message: firstString ?? args.map((a) => String(a)).join(" "),
+      metadata:
+        objects.length > 0
+          ? objects.length === 1
+            ? objects[0]
+            : { args: objects }
+          : undefined,
+    };
+  };
+
+  // Exception handler references for cleanup
+  let uncaughtExceptionHandler: ((err: Error) => void) | null = null;
+  let unhandledRejectionHandler: ((reason: any) => void) | null = null;
+
+  // Set up console capture if enabled
+  const setupConsoleCapture = () => {
+    if (consolePatched || !capture?.console) return;
+
+    console.log = (...args: any[]) => {
+      originalConsole.log(...args);
+      const { message, metadata } = argsToMessage(args);
+      if (message)
+        queueLog({
+          level: "debug",
+          message,
+          metadata,
+          timestamp: new Date().toISOString(),
+        });
+    };
+
+    console.info = (...args: any[]) => {
+      originalConsole.info(...args);
+      const { message, metadata } = argsToMessage(args);
+      if (message)
+        queueLog({
+          level: "info",
+          message,
+          metadata,
+          timestamp: new Date().toISOString(),
+        });
+    };
+
+    console.warn = (...args: any[]) => {
+      originalConsole.warn(...args);
+      const { message, metadata } = argsToMessage(args);
+      if (message)
+        queueLog({
+          level: "warn",
+          message,
+          metadata,
+          timestamp: new Date().toISOString(),
+        });
+    };
+
+    console.error = (...args: any[]) => {
+      originalConsole.error(...args);
+      const { message, metadata } = argsToMessage(args);
+      if (message)
+        queueLog({
+          level: "error",
+          message,
+          metadata,
+          timestamp: new Date().toISOString(),
+        });
+    };
+
+    consolePatched = true;
+  };
+
+  // Set up exception capture if enabled
+  const setupExceptionCapture = () => {
+    if (exceptionHandlersInstalled || !capture?.exceptions) return;
+
+    uncaughtExceptionHandler = (err: Error) => {
+      queueLog({
+        level: "error",
+        message: `Uncaught Exception: ${err.message}`,
+        metadata: { stack: err.stack, name: err.name },
+        timestamp: new Date().toISOString(),
+      });
+      // Flush immediately on exception
+      flushLogs();
+    };
+
+    unhandledRejectionHandler = (reason: any) => {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const metadata =
+        reason instanceof Error
+          ? { stack: reason.stack, name: reason.name }
+          : { reason };
+      queueLog({
+        level: "error",
+        message: `Unhandled Promise Rejection: ${message}`,
+        metadata,
+        timestamp: new Date().toISOString(),
+      });
+      flushLogs();
+    };
+
+    process.on("uncaughtException", uncaughtExceptionHandler);
+    process.on("unhandledRejection", unhandledRejectionHandler);
+    exceptionHandlersInstalled = true;
+  };
+
+  // Restore original console methods
+  const restoreConsole = () => {
+    if (!consolePatched) return;
+    console.log = originalConsole.log;
+    console.info = originalConsole.info;
+    console.warn = originalConsole.warn;
+    console.error = originalConsole.error;
+    consolePatched = false;
+  };
+
+  // Remove exception handlers
+  const removeExceptionHandlers = () => {
+    if (!exceptionHandlersInstalled) return;
+    if (uncaughtExceptionHandler) {
+      process.removeListener("uncaughtException", uncaughtExceptionHandler);
+    }
+    if (unhandledRejectionHandler) {
+      process.removeListener("unhandledRejection", unhandledRejectionHandler);
+    }
+    exceptionHandlersInstalled = false;
+  };
+
+  // Initialize capture if configured
+  setupConsoleCapture();
+  setupExceptionCapture();
+
   return {
-    log: createLogger("LOG", "debug", console.log),
-    info: createLogger("INFO", "info", console.info),
-    warn: createLogger("WARN", "warn", console.warn),
-    error: createLogger("ERROR", "error", console.error),
-    blank: (lines: number = 1) => console.log("\n".repeat(lines)),
+    log: createLogger("LOG", "debug", originalConsole.log),
+    info: createLogger("INFO", "info", originalConsole.info),
+    warn: createLogger("WARN", "warn", originalConsole.warn),
+    error: createLogger("ERROR", "error", originalConsole.error),
+    blank: (lines: number = 1) => originalConsole.log("\n".repeat(lines)),
     flush: flushLogs,
     destroy: () => {
       if (flushTimer) {
         clearInterval(flushTimer);
         flushTimer = null;
       }
+      restoreConsole();
+      removeExceptionHandlers();
       return flushLogs();
     },
+    /**
+     * Restore original console methods without destroying the logger
+     */
+    restoreConsole,
+    /**
+     * Re-enable console capture after it was disabled
+     */
+    enableConsoleCapture: setupConsoleCapture,
   };
 };

@@ -92,6 +92,48 @@ await loggy.destroy();
 | `flushInterval` | number | `5000`                           | Milliseconds between auto-flushes  |
 | `publicKey`     | string | -                                | RSA public key for end-to-end encryption |
 
+### Auto-Capture (Smart Defaults)
+
+Automatically capture all `console.log`, `console.warn`, `console.error`, and `console.info` calls without changing your existing code:
+
+```javascript
+import { CreateLoggy } from "@loggydev/loggy-node";
+
+const loggy = CreateLoggy({
+  identifier: "my-app",
+  remote: {
+    token: "your-project-token",
+  },
+  capture: {
+    console: true,     // Capture all console.* calls
+    exceptions: true,  // Capture uncaught exceptions and unhandled rejections
+  }
+});
+
+// Now all console.log calls are automatically sent to Loggy!
+console.log("This will appear in your Loggy dashboard");
+console.error("Errors too!");
+
+// You can still use loggy methods directly for more control
+loggy.info("Direct log with metadata", { userId: 123 });
+
+// Restore original console methods if needed
+loggy.restoreConsole();
+
+// Re-enable capture
+loggy.enableConsoleCapture();
+
+// Clean up on shutdown
+await loggy.destroy();
+```
+
+#### Capture Configuration
+
+| Option       | Type    | Default | Description                                      |
+| :----------- | :------ | :------ | :----------------------------------------------- |
+| `console`    | boolean | `false` | Capture console.log/info/warn/error calls        |
+| `exceptions` | boolean | `false` | Capture uncaught exceptions and promise rejections |
+
 ### End-to-End Encryption
 
 For sensitive log data, you can enable end-to-end encryption. Logs are encrypted on your system before being sent to Loggy.dev, ensuring that even in transit, the payload is unreadable without the server's private key.
